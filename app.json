@@ -47,6 +47,13 @@
         {
           "enableFTS": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#00D4FF"
+        }
       ]
     ],
     "experiments": {

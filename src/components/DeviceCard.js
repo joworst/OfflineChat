@@ -1,14 +1,22 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { darkTheme } from '../theme/colors';
 
 export default function DeviceCard({ name, rssi, onPress }) {
+  const signalStrength = rssi >= -50 ? 'Fort' : rssi >= -70 ? 'Moyen' : 'Faible';
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress}>
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+      <View style={styles.avatar}>
+        <View style={styles.avatarDot} />
+      </View>
       <View style={styles.info}>
         <Text style={styles.name}>{name}</Text>
-        <Text style={styles.rssi}>Signal: {rssi} dBm</Text>
+        <Text style={styles.rssi}>
+          Signal: {signalStrength} ({rssi} dBm)
+        </Text>
       </View>
-      <Text style={styles.arrow}>{'>'}</Text>
+      <Text style={styles.arrow}>&gt;</Text>
     </TouchableOpacity>
   );
 }
@@ -18,16 +26,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#fff',
+    backgroundColor: darkTheme.card,
     padding: 16,
-    marginVertical: 4,
+    marginVertical: 5,
     marginHorizontal: 16,
-    borderRadius: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: darkTheme.border,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: darkTheme.overlay,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  avatarDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: darkTheme.primary,
+    opacity: 0.8,
   },
   info: {
     flex: 1,
@@ -35,15 +56,16 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: darkTheme.text,
   },
   rssi: {
     fontSize: 12,
-    color: '#888',
-    marginTop: 2,
+    color: darkTheme.textSecondary,
+    marginTop: 3,
   },
   arrow: {
-    fontSize: 18,
-    color: '#888',
+    fontSize: 20,
+    color: darkTheme.textMuted,
+    fontWeight: '300',
   },
 });

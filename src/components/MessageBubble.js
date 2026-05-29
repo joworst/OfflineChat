@@ -1,56 +1,74 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { darkTheme } from '../theme/colors';
 
 export default function MessageBubble({ text, isSent, timestamp }) {
+  const time = new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
   return (
-    <View style={[styles.bubble, isSent ? styles.sent : styles.received]}>
-      <Text style={[styles.text, isSent ? styles.sentText : styles.receivedText]}>
-        {text}
-      </Text>
-      <Text style={[styles.time, isSent ? styles.sentTime : styles.receivedTime]}>
-        {new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </Text>
+    <View style={[styles.wrapper, isSent ? styles.wrapperSent : styles.wrapperReceived]}>
+      <View style={[styles.bubble, isSent ? styles.sent : styles.received]}>
+        <Text style={[styles.text, isSent ? styles.sentText : styles.receivedText]}>
+          {text}
+        </Text>
+        <Text style={[styles.time, isSent ? styles.sentTime : styles.receivedTime]}>
+          {time}
+        </Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    marginVertical: 3,
+    marginHorizontal: 14,
+  },
+  wrapperSent: {
+    alignItems: 'flex-end',
+  },
+  wrapperReceived: {
+    alignItems: 'flex-start',
+  },
   bubble: {
-    maxWidth: '75%',
-    padding: 12,
-    borderRadius: 18,
-    marginVertical: 4,
-    marginHorizontal: 16,
+    maxWidth: '78%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
   sent: {
-    backgroundColor: '#007AFF',
-    alignSelf: 'flex-end',
+    backgroundColor: darkTheme.sentBubble,
     borderBottomRightRadius: 4,
   },
   received: {
-    backgroundColor: '#E9E9EB',
-    alignSelf: 'flex-start',
+    backgroundColor: darkTheme.receivedBubble,
     borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: darkTheme.border,
   },
   text: {
-    fontSize: 16,
+    fontSize: 15,
+    lineHeight: 20,
   },
   sentText: {
-    color: '#fff',
+    color: '#0D0D0D',
   },
   receivedText: {
-    color: '#1a1a1a',
+    color: darkTheme.text,
   },
   time: {
-    fontSize: 11,
+    fontSize: 10,
     marginTop: 4,
   },
   sentTime: {
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(13, 13, 13, 0.6)',
     textAlign: 'right',
   },
   receivedTime: {
-    color: '#888',
+    color: darkTheme.textMuted,
     textAlign: 'right',
   },
 });

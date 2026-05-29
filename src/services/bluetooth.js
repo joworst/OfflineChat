@@ -1,5 +1,6 @@
 import { BleManager } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid } from 'react-native';
+import { encrypt, decrypt } from './encryption';
 
 const CHAT_SERVICE_UUID = '0000180c-0000-1000-8000-00805f9b34fb';
 const CHAT_CHARACTERISTIC_UUID = '0000180d-0000-1000-8000-00805f9b34fb';
@@ -77,10 +78,11 @@ export async function connectToDevice(deviceInfo, onDisconnect) {
 }
 
 export async function sendMessage(device, message) {
+  const encrypted = encrypt(message);
   const characteristic = await device.writeCharacteristicWithResponseForService(
     CHAT_SERVICE_UUID,
     CHAT_CHARACTERISTIC_UUID,
-    btoa(message)
+    btoa(encrypted)
   );
   return characteristic;
 }
@@ -95,8 +97,11 @@ export async function subscribeToMessages(device, onMessage) {
         return;
       }
       if (characteristic?.value) {
-        const message = atob(characteristic.value);
-        onMessage(message);
+        const encrypted = atob(characteristic.value);
+        const decrypted = decrypt(encrypted);
+        if (decrypted) {
+          onMessage(decrypted);
+        }
       }
     }
   );

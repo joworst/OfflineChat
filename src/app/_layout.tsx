@@ -1,24 +1,38 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { darkTheme } from '../theme/colors';
+import { setupNotifications } from '../services/notifications';
 
 export default function RootLayout() {
+  useEffect(() => {
+    setupNotifications().catch(console.log);
+  }, []);
+
   return (
-    <Stack>
-      <Stack.Screen
-        name="index"
-        options={{
-          title: 'OfflineChat',
-          headerStyle: { backgroundColor: '#007AFF' },
-          headerTintColor: '#fff',
+    <>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: darkTheme.surface },
+          headerTintColor: darkTheme.text,
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: darkTheme.background },
         }}
-      />
-      <Stack.Screen
-        name="chat/[id]"
-        options={{
-          title: 'Conversation',
-          headerStyle: { backgroundColor: '#007AFF' },
-          headerTintColor: '#fff',
-        }}
-      />
-    </Stack>
+      >
+        <Stack.Screen
+          name="index"
+          options={{
+            title: 'OfflineChat',
+          }}
+        />
+        <Stack.Screen
+          name="chat/[id]"
+          options={{
+            title: 'Conversation',
+          }}
+        />
+      </Stack>
+    </>
   );
 }
