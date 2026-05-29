@@ -1,24 +1,52 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import { darkTheme } from '../theme/colors';
 
-export default function MessageBubble({ text, isSent, timestamp }) {
+const statusSymbols = {
+  sent: '>',
+  delivered: '>>',
+  read: '>>',
+};
+
+const statusColors = {
+  sent: darkTheme.textMuted,
+  delivered: darkTheme.textSecondary,
+  read: darkTheme.primary,
+};
+
+export default function MessageBubble({ text, isSent, timestamp, status }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const time = new Date(timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
   });
 
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
   return (
-    <View style={[styles.wrapper, isSent ? styles.wrapperSent : styles.wrapperReceived]}>
+    <Animated.View style={[styles.wrapper, isSent ? styles.wrapperSent : styles.wrapperReceived, { opacity: fadeAnim }]}>
       <View style={[styles.bubble, isSent ? styles.sent : styles.received]}>
         <Text style={[styles.text, isSent ? styles.sentText : styles.receivedText]}>
           {text}
         </Text>
-        <Text style={[styles.time, isSent ? styles.sentTime : styles.receivedTime]}>
-          {time}
-        </Text>
+        <View style={styles.meta}>
+          <Text style={[styles.time, isSent ? styles.sentTime : styles.receivedTime]}>
+            {time}
+          </Text>
+          {isSent && status && (
+            <Text style={[styles.statusIcon, { color: statusColors[status] || statusColors.sent }]}>
+              {statusSymbols[status] || statusSymbols.sent}
+            </Text>
+          )}
+        </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -59,16 +87,25 @@ const styles = StyleSheet.create({
   receivedText: {
     color: darkTheme.text,
   },
+  meta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    gap: 4,
+  },
   time: {
     fontSize: 10,
-    marginTop: 4,
   },
   sentTime: {
     color: 'rgba(13, 13, 13, 0.6)',
-    textAlign: 'right',
   },
   receivedTime: {
     color: darkTheme.textMuted,
-    textAlign: 'right',
+  },
+  statusIcon: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginLeft: 2,
   },
 });

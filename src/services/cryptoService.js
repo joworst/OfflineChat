@@ -7,6 +7,12 @@ export function encrypt(text) {
 }
 
 export function decrypt(ciphertext) {
-  const bytes = CryptoJS.AES.decrypt(ciphertext, SECRET_KEY);
-  return bytes.toString(CryptoJS.enc.Utf8);
+  try {
+    const bytes = CryptoJS.AES.decrypt(ciphertext, SECRET_KEY);
+    const result = bytes.toString(CryptoJS.enc.Utf8);
+    if (!result) return null;
+    return result;
+  } catch {
+    return null;
+  }
 }

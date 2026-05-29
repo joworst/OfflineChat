@@ -10,27 +10,47 @@ import {
   Platform,
   Alert,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import MessageBubble from '../../components/MessageBubble';
+import TypingIndicator from '../../components/TypingIndicator';
 import {
-  connectToDevice,
+  connectWithAutoReconnect,
   sendMessage,
-  subscribeToMessages,
-} from '../../services/bluetooth';
-import { saveMessage, getMessages } from '../../database/sqlite';
+} from '../../services/bleService';
+import {
+  createTextPayload,
+  createTypingPayload,
+  createTypingStopPayload,
+  createReadReceiptPayload,
+  MessageQueue,
+  MESSAGE_TYPES,
+  generateId,
+} from '../../services/transportManager';
+import {
+  initDatabase,
+  saveMessage,
+  getMessages,
+  updateMessageStatus,
+} from '../../database/sqlite';
 import { showLocalNotification } from '../../services/notifications';
 import { darkTheme } from '../../theme/colors';
+import { useChat } from '../../context/ChatContext';
 
 interface Message {
   id: number;
   deviceId: string;
   text: string;
   isSent: boolean;
+  status?: string;
+  messageId?: string;
   timestamp: string;
 }
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+const TYPING_TIMEOUT_MS = 2000;
 
 export default function ChatScreen() {
   const params = useLocalSearchParams();
@@ -39,12 +59,27 @@ export default function ChatScreen() {
   const myName = (params.myName as string) || 'Moi';
   const myColor = (params.myColor as string) || darkTheme.primary;
 
+  const { setConnectionStatus } = useChat();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
+  const [connectionState, setConnectionState] = useState<ConnectionStatus>('connecting');
+  const [otherTyping, setOtherTyping] = useState(false);
   const deviceRef = useRef<any>(null);
   const flatListRef = useRef<FlatList>(null);
-  const appStateRef = useRef('active');
+  const cancelRef = useRef<(() => void) | null>(null);
+  const queueRef = useRef<MessageQueue | null>(null);
+  const typingTimerRef = useRef<any>(null);
+  const wasTypingRef = useRef(false);
+  const receivedIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    initDatabase();
+    return () => {
+      if (cancelRef.current) cancelRef.current();
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    };
+  }, []);
 
   const loadMessages = useCallback(async () => {
     try {
@@ -57,53 +92,138 @@ export default function ChatScreen() {
 
   useEffect(() => {
     loadMessages();
-    connectToDevice(
-      { id: deviceId },
-      () => {
-        setConnectionStatus('disconnected');
-      }
-    )
-      .then(async (device: any) => {
-        deviceRef.current = device;
-        setConnectionStatus('connected');
 
-        await subscribeToMessages(device, (text: string) => {
-          const msg: Message = {
-            id: Date.now(),
-            deviceId,
-            text,
-            isSent: false,
-            timestamp: new Date().toISOString(),
-          };
-          setMessages((prev) => [...prev, msg]);
-          saveMessage(deviceId, text, false).catch(console.log);
-          showLocalNotification(
-            decodeURIComponent(deviceName || 'Inconnu'),
-            text
-          ).catch(console.log);
-        });
-      })
-      .catch((error: any) => {
-        setConnectionStatus('disconnected');
-        Alert.alert('Erreur connexion', error.message);
-      });
+    const handleMessage = async (parsed: any) => {
+      if (parsed.t === MESSAGE_TYPES.TEXT) {
+        if (receivedIdsRef.current.has(parsed.i)) return;
+        receivedIdsRef.current.add(parsed.i);
 
-    return () => {
-      if (deviceRef.current) {
-        deviceRef.current.cancelConnection();
+        const text = parsed.d || '';
+        const msg: Message = {
+          id: Date.now(),
+          deviceId,
+          text,
+          isSent: false,
+          status: 'received',
+          messageId: parsed.i,
+          timestamp: parsed.ts || new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, msg]);
+        saveMessage(deviceId, text, false, parsed.i).catch(console.log);
+
+        if (parsed.i) {
+          (async () => { await sendReadReceipt(parsed.i); })();
+        }
+
+        showLocalNotification(
+          decodeURIComponent(deviceName || 'Inconnu'),
+          text
+        ).catch(console.log);
+      } else if (parsed.t === MESSAGE_TYPES.TYPING) {
+        setOtherTyping(true);
+      } else if (parsed.t === MESSAGE_TYPES.TYPING_STOP) {
+        setOtherTyping(false);
+      } else if (parsed.t === MESSAGE_TYPES.READ_RECEIPT) {
+        const readMsgId = parsed.d;
+        if (readMsgId) {
+          updateMessageStatus(readMsgId, 'read').catch(console.log);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.messageId === readMsgId ? { ...m, status: 'read' } : m
+            )
+          );
+        }
       }
     };
+
+    (async () => {
+      try {
+        const { device, cancel } = await connectWithAutoReconnect(
+          { id: deviceId, name: deviceName },
+          (status: string) => {
+            setConnectionState(status as ConnectionStatus);
+            setConnectionStatus(status as ConnectionStatus);
+          },
+          handleMessage
+        );
+        deviceRef.current = device;
+        cancelRef.current = cancel;
+
+        queueRef.current = new MessageQueue((payload: string) =>
+          sendMessage(device, payload)
+        );
+      } catch (error: any) {
+        setConnectionState('disconnected');
+        setConnectionStatus('disconnected');
+        Alert.alert('Erreur connexion', error.message);
+      }
+    })();
+
+    return () => {
+      if (cancelRef.current) cancelRef.current();
+    };
   }, [deviceId, loadMessages, deviceName]);
+
+  const sendReadReceipt = useCallback((messageId: string) => {
+    if (deviceRef.current) {
+      const payload = createReadReceiptPayload(messageId);
+      sendMessage(deviceRef.current, payload).catch(() => {});
+    }
+  }, []);
+
+  const handleTyping = useCallback((text: string) => {
+    setInputText(text);
+
+    if (!wasTypingRef.current && text.length > 0) {
+      wasTypingRef.current = true;
+      if (deviceRef.current && queueRef.current) {
+        queueRef.current.enqueue(createTypingPayload());
+      }
+    }
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      if (wasTypingRef.current) {
+        wasTypingRef.current = false;
+        if (deviceRef.current && queueRef.current) {
+          queueRef.current.enqueue(createTypingStopPayload());
+        }
+      }
+    }, TYPING_TIMEOUT_MS);
+  }, []);
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
     if (!text || !deviceRef.current) return;
 
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (wasTypingRef.current) {
+      wasTypingRef.current = false;
+    }
+
+    const messageId = generateId();
+    const payload = createTextPayload(text, messageId);
+
     try {
-      await sendMessage(deviceRef.current, text);
-      const msg = await saveMessage(deviceId, text, true);
-      setMessages((prev) => [...prev, msg]);
+      if (queueRef.current) {
+        queueRef.current.enqueue(payload);
+      } else {
+        await sendMessage(deviceRef.current, payload);
+      }
+      const msg = await saveMessage(deviceId, text, true, messageId);
+      if (msg) {
+        setMessages((prev: Message[]) => [...prev, msg]);
+      }
       setInputText('');
+
+      setTimeout(() => {
+        updateMessageStatus(messageId, 'delivered').catch(() => {});
+        setMessages((prev: Message[]) =>
+          prev.map((m: Message) =>
+            m.messageId === messageId ? { ...m, status: 'delivered' } : m
+          )
+        );
+      }, 500);
     } catch (e: any) {
       Alert.alert('Erreur envoi', e.message);
     }
@@ -115,7 +235,7 @@ export default function ChatScreen() {
     disconnected: { label: 'Deconnecte', color: darkTheme.danger },
   };
 
-  const status = statusConfig[connectionStatus];
+  const status = statusConfig[connectionState];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -124,9 +244,8 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {}
         <View style={styles.connectionBar}>
-          <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+          <Animated.View style={[styles.statusDot, { backgroundColor: status.color }]} />
           <Text style={styles.connectionText}>
             {decodeURIComponent(deviceName || 'Appareil')}
           </Text>
@@ -135,7 +254,6 @@ export default function ChatScreen() {
           </Text>
         </View>
 
-        {}
         <View style={styles.encryptionBadge}>
           <Text style={styles.encryptionText}>Messages chiffres AES</Text>
         </View>
@@ -149,6 +267,7 @@ export default function ChatScreen() {
               text={item.text}
               isSent={item.isSent}
               timestamp={item.timestamp}
+              status={item.status}
             />
           )}
           style={styles.flex}
@@ -156,30 +275,30 @@ export default function ChatScreen() {
           onContentSizeChange={() =>
             flatListRef.current?.scrollToEnd({ animated: true })
           }
+          ListFooterComponent={otherTyping ? <TypingIndicator /> : null}
         />
 
-        {}
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
             value={inputText}
-            onChangeText={setInputText}
+            onChangeText={handleTyping}
             placeholder="Ecris un message..."
             placeholderTextColor={darkTheme.textMuted}
-            editable={connectionStatus === 'connected'}
+            editable={connectionState === 'connected'}
             onSubmitEditing={handleSend}
             multiline={false}
           />
           <TouchableOpacity
             style={[
               styles.sendButton,
-              connectionStatus !== 'connected' && styles.sendButtonDisabled,
+              connectionState !== 'connected' && styles.sendButtonDisabled,
             ]}
             onPress={handleSend}
-            disabled={connectionStatus !== 'connected'}
+            disabled={connectionState !== 'connected'}
             activeOpacity={0.7}
           >
-            <Text style={[styles.sendArrow, connectionStatus !== 'connected' && styles.sendArrowDisabled]}>
+            <Text style={[styles.sendArrow, connectionState !== 'connected' && styles.sendArrowDisabled]}>
               &gt;
             </Text>
           </TouchableOpacity>

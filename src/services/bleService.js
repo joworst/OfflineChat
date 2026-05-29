@@ -1,9 +1,14 @@
 import { BleManager } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid } from 'react-native';
-import { encrypt, decrypt } from './encryption';
+import { encrypt, decrypt } from './cryptoService';
+import { unwrapMessage, MESSAGE_TYPES } from './transportManager';
 
 const CHAT_SERVICE_UUID = '0000180c-0000-1000-8000-00805f9b34fb';
 const CHAT_CHARACTERISTIC_UUID = '0000180d-0000-1000-8000-00805f9b34fb';
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY = 1000;
+const SCAN_TIMEOUT = 15000;
 
 let manager;
 
@@ -67,6 +72,28 @@ export function stopScan() {
   bleManager.stopDeviceScan();
 }
 
+export function scanWithTimeout(onDeviceFound, onError) {
+  return new Promise((resolve) => {
+    const devices = [];
+    startScan(
+      (device) => {
+        const exists = devices.find(d => d.id === device.id);
+        if (exists) {
+          Object.assign(exists, device);
+        } else {
+          devices.push(device);
+        }
+        if (onDeviceFound) onDeviceFound(device);
+      },
+      onError
+    );
+    setTimeout(() => {
+      stopScan();
+      resolve(devices);
+    }, SCAN_TIMEOUT);
+  });
+}
+
 export async function connectToDevice(deviceInfo, onDisconnect) {
   const bleManager = getManager();
   const device = await bleManager.connectToDevice(deviceInfo.id);
@@ -77,14 +104,74 @@ export async function connectToDevice(deviceInfo, onDisconnect) {
   return device;
 }
 
-export async function sendMessage(device, message) {
-  const encrypted = encrypt(message);
-  const characteristic = await device.writeCharacteristicWithResponseForService(
+export async function connectWithAutoReconnect(deviceInfo, onStatusChange, onMessage) {
+  const MAX_ATTEMPTS = MAX_RECONNECT_ATTEMPTS;
+  let attempt = 0;
+  let device = null;
+  let cancelled = false;
+
+  const tryConnect = async () => {
+    while (attempt < MAX_ATTEMPTS && !cancelled) {
+      try {
+        onStatusChange('connecting');
+        device = await connectToDevice(deviceInfo, async (error) => {
+          onStatusChange('disconnected');
+          if (!cancelled) {
+            const delay = RECONNECT_BASE_DELAY * Math.min(Math.pow(2, attempt), 16);
+            attempt++;
+            await new Promise(r => setTimeout(r, delay));
+            if (!cancelled) {
+              await tryConnect();
+            }
+          }
+        });
+        attempt = 0;
+        onStatusChange('connected');
+        if (onMessage) {
+          await subscribeToMessages(device, onMessage);
+        }
+        return device;
+      } catch (error) {
+        attempt++;
+        if (attempt >= MAX_ATTEMPTS || cancelled) {
+          onStatusChange('disconnected');
+          throw error;
+        }
+        const delay = RECONNECT_BASE_DELAY * Math.min(Math.pow(2, attempt), 16);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    return device;
+  };
+
+  const cancel = () => {
+    cancelled = true;
+    if (device) {
+      device.cancelConnection().catch(() => {});
+    }
+  };
+
+  try {
+    device = await tryConnect();
+  } catch (error) {
+    cancel();
+    throw error;
+  }
+
+  return { device, cancel };
+}
+
+export async function sendRawMessage(device, payload) {
+  const encrypted = encrypt(payload);
+  await device.writeCharacteristicWithResponseForService(
     CHAT_SERVICE_UUID,
     CHAT_CHARACTERISTIC_UUID,
     btoa(encrypted)
   );
-  return characteristic;
+}
+
+export async function sendMessage(device, message) {
+  await sendRawMessage(device, message);
 }
 
 export async function subscribeToMessages(device, onMessage) {
@@ -100,9 +187,17 @@ export async function subscribeToMessages(device, onMessage) {
         const encrypted = atob(characteristic.value);
         const decrypted = decrypt(encrypted);
         if (decrypted) {
-          onMessage(decrypted);
+          const parsed = unwrapMessage(decrypted);
+          onMessage(parsed);
         }
       }
     }
   );
+}
+
+export function destroyManager() {
+  if (manager) {
+    manager.destroy();
+    manager = null;
+  }
 }

@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { darkTheme } from '../theme/colors';
 
-export default function DeviceCard({ name, rssi, onPress }) {
+export default function DeviceCard({ name, rssi, onPress, index }) {
   const signalStrength = rssi >= -50 ? 'Fort' : rssi >= -70 ? 'Moyen' : 'Faible';
 
   return (

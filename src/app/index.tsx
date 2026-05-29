@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import DeviceCard from '../components/DeviceCard';
@@ -15,10 +16,10 @@ import {
   requestPermissions,
   startScan,
   stopScan,
-} from '../services/bluetooth';
+} from '../services/bleService';
 import { initDatabase } from '../database/sqlite';
-import { getProfile, saveProfile, generateDefaultProfile } from '../services/profile';
 import { darkTheme } from '../theme/colors';
+import { useUser } from '../context/UserContext';
 
 interface Device {
   id: string;
@@ -27,32 +28,29 @@ interface Device {
   device: any;
 }
 
-interface Profile {
-  pseudo: string;
-  color: string;
-  avatar: string;
-}
-
 export default function HomeScreen() {
+  const { profile, ready: profileReady } = useUser();
   const [devices, setDevices] = useState<Device[]>([]);
   const [scanning, setScanning] = useState(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [profileReady, setProfileReady] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const scanTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     initDatabase().catch(console.log);
-    loadProfile();
   }, []);
 
-  const loadProfile = async () => {
-    let p = await getProfile();
-    if (!p) {
-      p = generateDefaultProfile();
-      await saveProfile(p);
+  useEffect(() => {
+    if (scanning) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
     }
-    setProfile(p);
-    setProfileReady(true);
-  };
+  }, [scanning]);
 
   const handleScan = useCallback(async () => {
     try {
@@ -82,13 +80,14 @@ export default function HomeScreen() {
       }
     );
 
-    setTimeout(() => {
+    scanTimeoutRef.current = setTimeout(() => {
       stopScan();
       setScanning(false);
     }, 15000);
   }, []);
 
   const handleDevicePress = useCallback((device: Device) => {
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
     stopScan();
     setScanning(false);
     router.push(
@@ -106,7 +105,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {}
       <View style={styles.profileBar}>
         <View style={[styles.profileAvatar, { backgroundColor: profile?.color || darkTheme.primary }]}>
           <Text style={styles.profileInitial}>
@@ -142,7 +140,9 @@ export default function HomeScreen() {
 
       {scanning && devices.length === 0 && (
         <View style={styles.emptyScanning}>
-          <ActivityIndicator size="large" color={darkTheme.primary} />
+          <Animated.View style={{ opacity: pulseAnim }}>
+            <ActivityIndicator size="large" color={darkTheme.primary} />
+          </Animated.View>
           <Text style={styles.scanningLabel}>Recherche d'appareils...</Text>
         </View>
       )}
@@ -150,11 +150,12 @@ export default function HomeScreen() {
       <FlatList
         data={devices}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <DeviceCard
             name={item.name}
             rssi={item.rssi}
             onPress={() => handleDevicePress(item)}
+            index={index}
           />
         )}
         style={styles.list}
@@ -169,7 +170,7 @@ export default function HomeScreen() {
           activeOpacity={0.8}
         >
           <View style={[styles.scanButtonInner, scanning && styles.scanButtonInnerActive]}>
-            <Text style={[styles.scanButtonIcon]}>+</Text>
+            <Text style={styles.scanButtonIcon}>+</Text>
             <Text style={styles.scanButtonText}>
               {scanning ? 'Scan en cours...' : 'Scanner les appareils'}
             </Text>
