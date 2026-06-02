@@ -54,7 +54,8 @@
           "icon": "./assets/images/icon.png",
           "color": "#00D4FF"
         }
-      ]
+      ],
+      "expo-dev-client"
     ],
     "experiments": {
       "typedRoutes": true,
